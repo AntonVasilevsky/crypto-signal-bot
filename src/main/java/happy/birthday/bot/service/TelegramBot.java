@@ -128,12 +128,12 @@ public class TelegramBot extends TelegramLongPollingBot {
                 setUpConfirmationBeforeCancellation(chatId, signalToCancel, instructionsForConfirmationButtons, ONE_ORDER);
             } else if (messageText.startsWith("cancel_pos")) {
                 int index = Integer.parseInt(extractLastWord(messageText)) - 1;
-                    if (index < sharedData.getUserSignalsSizeWithLock()) {
-                        signalToCancel = sharedData.getUserSignalsIndexWithLock(index);
-                        setUpConfirmationBeforeCancellation(chatId, signalToCancel, instructionsForConfirmationButtons, ONE_ORDER);
-                    } else sendMessage(chatId, "There is no such signal");
+                if (index < sharedData.getUserSignalsSizeWithLock()) {
+                    signalToCancel = sharedData.getUserSignalsIndexWithLock(index);
+                    setUpConfirmationBeforeCancellation(chatId, signalToCancel, instructionsForConfirmationButtons, ONE_ORDER);
+                } else sendMessage(chatId, "There is no such signal");
             } else if (messageText.equals("cancel_all")) {
-                setUpConfirmationBeforeCancellation(chatId, new Signal("s", 12.2, 0.0,"", 1, counter++), instructionsForConfirmationButtons, ALl_ORDERS);
+                setUpConfirmationBeforeCancellation(chatId, new Signal("s", 12.2, 0.0, "", 1, counter++), instructionsForConfirmationButtons, ALl_ORDERS);
                 System.out.println("********** cancel all **********");
             } else if (messageText.startsWith("set default stable")) {
                 defaultStableCoin = extractLastWord(messageText).toUpperCase();
@@ -143,9 +143,8 @@ public class TelegramBot extends TelegramLongPollingBot {
             } else if (messageText.equals("default fiat")) {
                 configureAndSendMessage(chatId, "Default fiat currency is: " + defaultFiat);
             } else if (messageText.equals("edit")) {
-                    sharedLock.lock();
-                    String message = getListOrdersString(sharedData.getUserSignalsCopyWithLock());
-                    configureAndSendMessage(chatId, message);
+                String message = getListOrdersString(sharedData.getUserSignalsCopyWithLock());
+                configureAndSendMessage(chatId, message);
             } else if (messageText.equals("test")) {
                 String message = sharedData.getUserSignalsIndexWithLock(0).toString();
                 configureAndSendMessage(chatId, message);
@@ -207,8 +206,12 @@ public class TelegramBot extends TelegramLongPollingBot {
                     .append(" ")
                     .append(signal.price())
                     .append(" ")
-                    .append(signal.message())
-                    .append("\n");
+                    .append(signal.message());
+            if (signal.isLong()) {
+                stringBuilder
+                        .append(" L")
+                        .append("\n");
+            } else stringBuilder.append(" S").append("\n");
         }
         stringBuilder.append("To cancel a signal type: cancel_pos <your_number> \n");
         return stringBuilder.toString();
@@ -268,27 +271,21 @@ public class TelegramBot extends TelegramLongPollingBot {
                 }
             }
             message = sb.toString();
-            try {
-                sharedLock.lock();
-                log.info("LOCK for current TAKEN in {}", Thread.currentThread().getName());
-                List<JsonObject> extractedObjects = eventListener.getExtractedObjects();
-                log.info("EXTRACTED SIZE: {}", extractedObjects.size());
-                for (JsonObject o : extractedObjects
-                ) {
-                    Swap swap = (Swap) o;
-                    if (swap.instId().contains(ticker)) {
-                        current = swap.last();
-                        log.info("Current value is {}", current);
-                        isValid = true;
-                        log.info("SWAP last = {}, isValid = {}", current, isValid);
-                    }
+
+            log.info("LOCK for current TAKEN in {}", Thread.currentThread().getName());
+            List<JsonObject> extractedObjects = sharedData.getExtractedObjectsCopyWithLock();
+            log.info("EXTRACTED SIZE: {}", extractedObjects.size());
+            for (JsonObject o : extractedObjects
+            ) {
+                Swap swap = (Swap) o;
+                if (swap.instId().contains(ticker)) {
+                    current = swap.last();
+                    log.info("Current value is {}", current);
+                    isValid = true;
+                    log.info("SWAP last = {}, isValid = {}", current, isValid);
                 }
-            } finally {
-                sharedLock.unlock();
-                log.info("LOCK for current RELEASED");
             }
 
-// todo here!!!!!
         } catch (IllegalArgumentException e) {
             log.error(e.getMessage());
             return getErrorSignal();
@@ -475,8 +472,8 @@ public class TelegramBot extends TelegramLongPollingBot {
             try {
                 Thread.sleep(500);
                 //log.info("While woke up matched size: {}", matchedSignals.size());
-                log.info("monitor flag in {} is working", Thread.currentThread().getName());
-            } catch (InterruptedException e) {
+                // log.info("monitor flag in {} is working", Thread.currentThread().getName());
+            } catch (Exception e) {
                 throw new RuntimeException(e);
             }
         }

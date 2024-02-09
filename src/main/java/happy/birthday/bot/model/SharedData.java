@@ -5,7 +5,6 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
 import java.util.ArrayList;
-import java.util.Collections;
 import java.util.List;
 import java.util.concurrent.locks.Lock;
 
@@ -14,13 +13,16 @@ import java.util.concurrent.locks.Lock;
 @Getter
 public class SharedData {
     private final Lock userSignalsLock;
+    private final Lock extractedObjectsLock;
+
 
     //  private List<JsonObject> extractedObjects = Collections.synchronizedList(new ArrayList<>());
-    private List<JsonObject> extractedObjects = Collections.synchronizedList(new ArrayList<>());
+    private List<JsonObject> extractedObjects = new ArrayList<>();
     private final List<Signal> userSignals = new ArrayList<>();
 
-    public SharedData(Lock userSignalsLock) {
+    public SharedData(Lock userSignalsLock, Lock extractedObjectsLock) {
         this.userSignalsLock = userSignalsLock;
+        this.extractedObjectsLock = extractedObjectsLock;
     }
 
     public void addUserSignalsWithLock(Signal signal) {
@@ -87,4 +89,21 @@ public class SharedData {
         }
     }
 
+    public List<JsonObject> getExtractedObjectsCopyWithLock() {
+        try {
+            extractedObjectsLock.lock();
+            return new ArrayList<>(extractedObjects);
+        } finally {
+            userSignalsLock.unlock();
+        }
+    }
+
+    public void setExtractedObjectsWithLock(List<JsonObject> jsonObjectListFromApi) {
+        try {
+            extractedObjectsLock.lock();
+            extractedObjects = jsonObjectListFromApi;
+        } finally {
+            userSignalsLock.unlock();
+        }
+    }
 }

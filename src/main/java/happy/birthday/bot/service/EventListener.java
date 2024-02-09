@@ -48,7 +48,6 @@ public class EventListener {
     private final ObjectMapper objectMapper;
     private final Lock sharedLock;
     private final SharedData sharedData;
-    private List<JsonObject> extractedObjects = Collections.synchronizedList(new ArrayList<>()); // todo
 
     public EventListener(ObjectMapper objectMapper, Lock sharedLock, SharedData sharedData) {
         this.objectMapper = objectMapper;
@@ -90,9 +89,10 @@ public class EventListener {
             log.info("USERSIGNALS size: {}", sharedData.getUserSignalsSizeWithLock());
         boolean userSignalsNotEmpty;
 
-        extractedObjects = getJsonObjectListFromApi(connection);
+        sharedData.setExtractedObjectsWithLock(getJsonObjectListFromApi(connection));
+        List<JsonObject> extractedObjectsCopy = sharedData.getExtractedObjectsCopyWithLock();
         if (!sharedData.getUserSignals().isEmpty()) {
-            extractedObjects.forEach(jsonObject -> {
+            extractedObjectsCopy.forEach(jsonObject -> {
                 Swap swap = (Swap) jsonObject;          //todo что если у нас не только SWAP?
                 Signal matchedSignal = null;
                 List<Signal> userSignalsCopy = sharedData.getUserSignalsCopyWithLock();
@@ -185,16 +185,7 @@ public class EventListener {
             } catch (Exception e) {
                 e.printStackTrace();
             }
-            try {
-                sharedLock.lock();
-                this.extractedObjects = extractedObjects;
-            } catch (Exception e) {
-                e.printStackTrace();
-            }
-        finally
-            {
-                sharedLock.unlock();
-            }
+
             log.info("METHOD getJsonObjectListFromApi ends.");
             return extractedObjects;
         }
