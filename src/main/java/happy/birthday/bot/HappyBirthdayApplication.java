@@ -30,9 +30,10 @@ public class HappyBirthdayApplication {
             try {
                     while (true) {
                         eventListener.monitorApiData();
-                        Thread.sleep(500);
+                        Thread.sleep(300);
                     }
-            } catch (IOException e) {
+            } catch (Exception e) {
+                e.printStackTrace();
                 throw new RuntimeException(e);
             }
         });

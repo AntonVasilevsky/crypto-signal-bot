@@ -1,10 +1,10 @@
 package happy.birthday.bot.service;
 
 ;
-import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import happy.birthday.bot.model.JsonObject;
+import happy.birthday.bot.model.SharedData;
 import happy.birthday.bot.model.Signal;
 import happy.birthday.bot.model.Swap;
 import lombok.Getter;
@@ -21,6 +21,7 @@ import java.net.URL;
 import java.time.Instant;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 import java.util.concurrent.locks.Lock;
 
@@ -46,11 +47,13 @@ public class EventListener {
     private volatile boolean isOn = true;
     private final ObjectMapper objectMapper;
     private final Lock sharedLock;
-    private List<JsonObject> extractedObjects = new ArrayList<>();
+    private final SharedData sharedData;
+    private List<JsonObject> extractedObjects = Collections.synchronizedList(new ArrayList<>()); // todo
 
-    public EventListener(ObjectMapper objectMapper, Lock sharedLock) {
+    public EventListener(ObjectMapper objectMapper, Lock sharedLock, SharedData sharedData) {
         this.objectMapper = objectMapper;
         this.sharedLock = sharedLock;
+        this.sharedData = sharedData;
     }
 
     public HttpURLConnection setupConnection() {
@@ -81,49 +84,55 @@ public class EventListener {
     }
 
     public void monitorApiData() throws IOException {
-            log.info("WHILE in monitor started");
+            log.info("METHOD: monitorApiData started");
             HttpURLConnection connection = setupConnection();
             log.info("Connection created code {}", connection.getResponseCode());
-            log.info("USERSIGNALS size: {}", userSignals.size());
+            log.info("USERSIGNALS size: {}", sharedData.getUserSignalsSizeWithLock());
         boolean userSignalsNotEmpty;
-        try {
-            sharedLock.lock();
-            extractedObjects = getJsonObjectListFromApi(connection);
-            userSignalsNotEmpty = !userSignals.isEmpty();
-            } finally {
-                sharedLock.unlock();
-            }
-            if (userSignalsNotEmpty) {
+
+        extractedObjects = getJsonObjectListFromApi(connection);
+        if (!sharedData.getUserSignals().isEmpty()) {
             extractedObjects.forEach(jsonObject -> {
                 Swap swap = (Swap) jsonObject;          //todo что если у нас не только SWAP?
-                for (Signal s : userSignals
+                Signal matchedSignal = null;
+                List<Signal> userSignalsCopy = sharedData.getUserSignalsCopyWithLock();
+                for (Signal s : userSignalsCopy
                 ) {
                     if (s.isLong() && swap.instId().equals(s.ticker()) && swap.last() >= s.price()) {
                         try {
                             sharedLock.lock();
-                            TelegramBot.matchedSignals.add(userSignals.remove(userSignals.indexOf(s)));
-                            log.info("Signal removed IN LONG userSignals size: {}", userSignals.size());
-                        } finally {
+                            matchedSignal = s;
+                            TelegramBot.matchedSignals.add(s);
+                            log.info("Signal removed IN LONG userSignals size: {}", userSignalsCopy.size());
+                        } catch (Exception e) {
+                            log.error("Signal removal error in long",e);
+                        }finally {
                             sharedLock.unlock();
                             System.out.println("FINALLY");
                         }
                     } else if ((!s.isLong()) && swap.instId().equals(s.ticker()) && swap.last() <= s.price()) {
                         try {
+                            matchedSignal = s;
                             sharedLock.lock();
-                            TelegramBot.matchedSignals.add(userSignals.remove(userSignals.indexOf(s)));
+                            TelegramBot.matchedSignals.add(matchedSignal);
                             log.info("Signal removed in SHORT userSignals size: {}", userSignals.size());
 
-                        } finally {
+                        } catch (Exception e) {
+                            log.error("Signal removal error in short",e);
+                        } finally{
+
                             sharedLock.unlock();
                             System.out.println("FINALLY");
                         }
                     }
                 }
+                sharedData.removeFromUserSignalsWithLock(matchedSignal);
             });
             try {
-                Thread.sleep(2000);
+
                 log.info("{} WAKES UP", Thread.currentThread().getName());
-            } catch (InterruptedException e) {
+            } catch (Exception e) {
+                log.error("Wake up error", e);
                 throw new RuntimeException(e);
             }
         }
@@ -133,11 +142,12 @@ public class EventListener {
 
 
     public List<JsonObject> getJsonObjectListFromApi(HttpURLConnection connection) throws IOException {
+        log.info("METHOD: getJsonObjectListFromApi starts.");
         String line = "";
 
         int respCode = connection.getResponseCode();
         if (respCode != 200) {
-            throw new RuntimeException("HttpResponse: " + respCode);
+            throw new RuntimeException("ERROR: httpResponse: " + respCode);
         } else {
             try (InputStream is = connection.getInputStream();
                  BufferedReader br = new BufferedReader(new InputStreamReader(is))) {
@@ -148,9 +158,10 @@ public class EventListener {
                     line = sb.toString();
                     log.info("STRING from stream: {}", line);
                 }
-            }catch (IOException e) {
+            }catch (Exception e) {
                 log.error("Error reading from stream {}", e.getMessage());
             }
+            System.out.println("LINE: " + line);
 
             ArrayList<JsonObject> extractedObjects = new ArrayList<>();
             try {
@@ -168,37 +179,28 @@ public class EventListener {
                     String string = dataArrayNode.elements().toString();
                     System.out.println("THIS " + string);
                     System.out.println("'data' is not a JSON array.");
+
                 }
-            } catch (JsonProcessingException e) {
+                log.info("EXTRACTED FROM API size: {}", extractedObjects.size());
+            } catch (Exception e) {
                 e.printStackTrace();
             }
             try {
                 sharedLock.lock();
                 this.extractedObjects = extractedObjects;
-            } finally {
+            } catch (Exception e) {
+                e.printStackTrace();
+            }
+        finally
+            {
                 sharedLock.unlock();
             }
+            log.info("METHOD getJsonObjectListFromApi ends.");
             return extractedObjects;
         }
     }
 
-    public void cancelAllOrders() {
-        try {
-            sharedLock.lock();
-            userSignals.clear();
-        } finally {
-            sharedLock.unlock();
-        }
-    }
 
-    public void cancelOneOrder(Signal signalToCancel) {
-        try {
-            sharedLock.lock();
-            userSignals.remove(signalToCancel);
-        } finally {
-            sharedLock.unlock();
-        }
-        System.out.println("ORDER HAS BEEN CANCELLED");
-    }
+
 
 }

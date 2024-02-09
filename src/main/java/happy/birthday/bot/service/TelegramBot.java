@@ -2,6 +2,7 @@ package happy.birthday.bot.service;
 
 import com.vdurmont.emoji.EmojiParser;
 import happy.birthday.bot.model.JsonObject;
+import happy.birthday.bot.model.SharedData;
 import happy.birthday.bot.model.Signal;
 import happy.birthday.bot.model.Swap;
 import lombok.AccessLevel;
@@ -62,6 +63,7 @@ public class TelegramBot extends TelegramLongPollingBot {
     public static String cryptoTicker = userTickerPart + defaultStableCoin;
     private final EventListener eventListener;
     private final Lock sharedLock;
+    private final SharedData sharedData;
     @Getter
     public static List<Signal> matchedSignals;
 
@@ -70,12 +72,13 @@ public class TelegramBot extends TelegramLongPollingBot {
 
     // TODO настраиваем settings/edit
     @Autowired
-    public TelegramBot(String token, String name, Long botOwner, EventListener eventListener, Lock sharedLock) {
+    public TelegramBot(String token, String name, Long botOwner, EventListener eventListener, Lock sharedLock, SharedData sharedData) {
         super(token);
         this.name = name;
         this.botOwner = botOwner;
         this.eventListener = eventListener;
         this.sharedLock = sharedLock;
+        this.sharedData = sharedData;
         instructionsForConfirmationButtons = new HashMap<>();
         List<BotCommand> botCommandsList = new ArrayList<>();
         matchedSignals = new ArrayList<>();
@@ -108,11 +111,13 @@ public class TelegramBot extends TelegramLongPollingBot {
                 sendMessage(chatId, answer);
             } else if (messageText.startsWith("sig")) {
                 Signal userSignal = processTextSignal(chatId, messageText);
-                log.info("SIGNAL CREATED DETAILS: price {}, isLong = {}, current {}", userSignal.price(), userSignal.isLong(), userSignal.current());
+                System.out.println("********************" + userSignal);
+                log.info("SIGNAL CREATED DETAILS: {}", userSignal);
                 if (!userSignal.ticker().equalsIgnoreCase("error")) {
                     try {
                         sharedLock.lock();
-                        eventListener.getUserSignals().add(userSignal);
+                        //eventListener.getUserSignals().add(userSignal);
+                        sharedData.addUserSignalsWithLock(userSignal);
                     } finally {
                         sharedLock.unlock();
                     }
@@ -123,15 +128,10 @@ public class TelegramBot extends TelegramLongPollingBot {
                 setUpConfirmationBeforeCancellation(chatId, signalToCancel, instructionsForConfirmationButtons, ONE_ORDER);
             } else if (messageText.startsWith("cancel_pos")) {
                 int index = Integer.parseInt(extractLastWord(messageText)) - 1;
-                try {
-                    sharedLock.lock();
-                    if (index < eventListener.getUserSignals().size()) {
-                        signalToCancel = eventListener.getUserSignals().get(index);
+                    if (index < sharedData.getUserSignalsSizeWithLock()) {
+                        signalToCancel = sharedData.getUserSignalsIndexWithLock(index);
                         setUpConfirmationBeforeCancellation(chatId, signalToCancel, instructionsForConfirmationButtons, ONE_ORDER);
                     } else sendMessage(chatId, "There is no such signal");
-                } finally {
-                    sharedLock.unlock();
-                }
             } else if (messageText.equals("cancel_all")) {
                 setUpConfirmationBeforeCancellation(chatId, new Signal("s", 12.2, 0.0,"", 1, counter++), instructionsForConfirmationButtons, ALl_ORDERS);
                 System.out.println("********** cancel all **********");
@@ -143,15 +143,11 @@ public class TelegramBot extends TelegramLongPollingBot {
             } else if (messageText.equals("default fiat")) {
                 configureAndSendMessage(chatId, "Default fiat currency is: " + defaultFiat);
             } else if (messageText.equals("edit")) {
-                try {
                     sharedLock.lock();
-                    String message = getListOrdersString(eventListener.getUserSignals());
+                    String message = getListOrdersString(sharedData.getUserSignalsCopyWithLock());
                     configureAndSendMessage(chatId, message);
-                } finally {
-                    sharedLock.unlock();
-                }
-            } else if (messageText.equals("show")) {
-                String message = eventListener.getUserSignals().get(0).toString();
+            } else if (messageText.equals("test")) {
+                String message = sharedData.getUserSignalsIndexWithLock(0).toString();
                 configureAndSendMessage(chatId, message);
             } else {
                 configureAndSendMessage(chatId, "Sorry, this command is not recognized");
@@ -168,11 +164,11 @@ public class TelegramBot extends TelegramLongPollingBot {
                 Long l = instructionsForConfirmationButtons.get(CONFIRMATION_INSTRUCTION);
                 String text = "";
                 if (l == ONE_ORDER) {
-                    eventListener.cancelOneOrder(signalToCancel);
+                    sharedData.removeFromUserSignalsWithLock(signalToCancel);
                     text = "The order has been cancelled";
                     signalToCancel = null;
                 } else if (l == ALl_ORDERS) {
-                    eventListener.cancelAllOrders();
+                    sharedData.cancelAllOrders();
                     text = "All orders have been cancelled";
                 }
                 executeEditMessageText(chatId, text, messageId);
@@ -230,10 +226,11 @@ public class TelegramBot extends TelegramLongPollingBot {
         } else
             answer = "Signal: " + signal.ticker().toUpperCase() + " " + signal.price() + " has been created successfully.";
         sendMessage(chatId, answer);
-        log.info("replied on /start to user: " + name);
+        log.info("replied on /sig to user: " + name);
     }
 
     private Signal processTextSignal(Long chatId, String messageText) {
+        log.info("METHOD: processTextSignal started");
         boolean isValid = false;
         String[] array = messageText.split("\\s+");
         ArrayList<String> params = new ArrayList<>();
@@ -273,7 +270,7 @@ public class TelegramBot extends TelegramLongPollingBot {
             message = sb.toString();
             try {
                 sharedLock.lock();
-                log.info("LOCK for current TAKEN");
+                log.info("LOCK for current TAKEN in {}", Thread.currentThread().getName());
                 List<JsonObject> extractedObjects = eventListener.getExtractedObjects();
                 log.info("EXTRACTED SIZE: {}", extractedObjects.size());
                 for (JsonObject o : extractedObjects
@@ -283,6 +280,7 @@ public class TelegramBot extends TelegramLongPollingBot {
                         current = swap.last();
                         log.info("Current value is {}", current);
                         isValid = true;
+                        log.info("SWAP last = {}, isValid = {}", current, isValid);
                     }
                 }
             } finally {
@@ -296,7 +294,7 @@ public class TelegramBot extends TelegramLongPollingBot {
             return getErrorSignal();
         }
         if (ticker.isEmpty() || price < 0 || current < 0 || !isValid) {
-            log.error("Error signal was created  ticker:{}, price:{}, current:{}, isValid:{}", ticker, price, current, isValid);
+            log.error("METHOD: processTextSignal. Error signal was created  ticker:{}, price:{}, current:{}, isValid:{}", ticker, price, current, isValid);
             return getErrorSignal();
         }
         if (counter > 1000) counter = 0;
@@ -475,7 +473,7 @@ public class TelegramBot extends TelegramLongPollingBot {
                 }
             }
             try {
-                Thread.sleep(2000);
+                Thread.sleep(500);
                 //log.info("While woke up matched size: {}", matchedSignals.size());
                 log.info("monitor flag in {} is working", Thread.currentThread().getName());
             } catch (InterruptedException e) {
