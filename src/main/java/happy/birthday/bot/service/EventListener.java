@@ -46,12 +46,10 @@ public class EventListener {
     private List<Signal> userSignals = new ArrayList<>();
     private volatile boolean isOn = true;
     private final ObjectMapper objectMapper;
-    private final Lock sharedLock;
     private final SharedData sharedData;
 
-    public EventListener(ObjectMapper objectMapper, Lock sharedLock, SharedData sharedData) {
+    public EventListener(ObjectMapper objectMapper, SharedData sharedData) {
         this.objectMapper = objectMapper;
-        this.sharedLock = sharedLock;
         this.sharedData = sharedData;
     }
 
@@ -83,11 +81,10 @@ public class EventListener {
     }
 
     public void monitorApiData() throws IOException {
-            log.info("METHOD: monitorApiData started");
+          //  log.info("METHOD: monitorApiData started");
             HttpURLConnection connection = setupConnection();
-            log.info("Connection created code {}", connection.getResponseCode());
-            log.info("USERSIGNALS size: {}", sharedData.getUserSignalsSizeWithLock());
-        boolean userSignalsNotEmpty;
+          //  log.info("Connection created code {}", connection.getResponseCode());
+         //   log.info("USERSIGNALS size: {}", sharedData.getUserSignalsSizeWithLock());
 
         sharedData.setExtractedObjectsWithLock(getJsonObjectListFromApi(connection));
         List<JsonObject> extractedObjectsCopy = sharedData.getExtractedObjectsCopyWithLock();
@@ -99,38 +96,20 @@ public class EventListener {
                 for (Signal s : userSignalsCopy
                 ) {
                     if (s.isLong() && swap.instId().equals(s.ticker()) && swap.last() >= s.price()) {
-                        try {
-                            sharedLock.lock();
                             matchedSignal = s;
-                            TelegramBot.matchedSignals.add(s);
+                            sharedData.addMatchedSignalsWithLock(s);
                             log.info("Signal removed IN LONG userSignals size: {}", userSignalsCopy.size());
-                        } catch (Exception e) {
-                            log.error("Signal removal error in long",e);
-                        }finally {
-                            sharedLock.unlock();
-                            System.out.println("FINALLY");
-                        }
                     } else if ((!s.isLong()) && swap.instId().equals(s.ticker()) && swap.last() <= s.price()) {
-                        try {
                             matchedSignal = s;
-                            sharedLock.lock();
-                            TelegramBot.matchedSignals.add(matchedSignal);
+                            sharedData.addMatchedSignalsWithLock(s);
                             log.info("Signal removed in SHORT userSignals size: {}", userSignals.size());
-
-                        } catch (Exception e) {
-                            log.error("Signal removal error in short",e);
-                        } finally{
-
-                            sharedLock.unlock();
-                            System.out.println("FINALLY");
-                        }
                     }
                 }
                 sharedData.removeFromUserSignalsWithLock(matchedSignal);
             });
             try {
 
-                log.info("{} WAKES UP", Thread.currentThread().getName());
+               // log.info("{} WAKES UP", Thread.currentThread().getName());
             } catch (Exception e) {
                 log.error("Wake up error", e);
                 throw new RuntimeException(e);
@@ -142,7 +121,7 @@ public class EventListener {
 
 
     public List<JsonObject> getJsonObjectListFromApi(HttpURLConnection connection) throws IOException {
-        log.info("METHOD: getJsonObjectListFromApi starts.");
+      //  log.info("METHOD: getJsonObjectListFromApi starts.");
         String line = "";
 
         int respCode = connection.getResponseCode();
@@ -156,23 +135,23 @@ public class EventListener {
                 while (br.ready()) {
                     sb.append(br.readLine());
                     line = sb.toString();
-                    log.info("STRING from stream: {}", line);
+                   // log.info("STRING from stream: {}", line);
                 }
             }catch (Exception e) {
                 log.error("Error reading from stream {}", e.getMessage());
             }
-            System.out.println("LINE: " + line);
+         //   System.out.println("LINE: " + line);
 
             ArrayList<JsonObject> extractedObjects = new ArrayList<>();
             try {
                 JsonNode rootNode = objectMapper.readTree(line);
                 JsonNode dataArrayNode = rootNode.path("data");
-                System.out.println(dataArrayNode.asText());
+             //   System.out.println(dataArrayNode.asText());
                 if (dataArrayNode.isArray()) {
                     for (JsonNode node : dataArrayNode
                     ) {
                         Swap swap = objectMapper.treeToValue(node, Swap.class);
-                        if(swap.instId().contains("BTC-USDT")) System.out.println(swap); // TODO delete later
+                     //   if(swap.instId().contains("BTC-USDT")) System.out.println(swap); // TODO delete later
                         extractedObjects.add(swap);
                     }
                 } else {
@@ -181,12 +160,12 @@ public class EventListener {
                     System.out.println("'data' is not a JSON array.");
 
                 }
-                log.info("EXTRACTED FROM API size: {}", extractedObjects.size());
+               // log.info("EXTRACTED FROM API size: {}", extractedObjects.size());
             } catch (Exception e) {
                 e.printStackTrace();
             }
 
-            log.info("METHOD getJsonObjectListFromApi ends.");
+          //  log.info("METHOD getJsonObjectListFromApi ends.");
             return extractedObjects;
         }
     }

@@ -61,31 +61,27 @@ public class TelegramBot extends TelegramLongPollingBot {
     public static String defaultFiat = "USD";
     public static String userTickerPart = "";
     public static String cryptoTicker = userTickerPart + defaultStableCoin;
-    private final EventListener eventListener;
     private final Lock sharedLock;
     private final SharedData sharedData;
-    @Getter
-    public static List<Signal> matchedSignals;
+
 
     @Getter
     public static int counter = 0;
 
     // TODO настраиваем settings/edit
     @Autowired
-    public TelegramBot(String token, String name, Long botOwner, EventListener eventListener, Lock sharedLock, SharedData sharedData) {
+    public TelegramBot(String token, String name, Long botOwner, Lock sharedLock, SharedData sharedData) {
         super(token);
         this.name = name;
         this.botOwner = botOwner;
-        this.eventListener = eventListener;
         this.sharedLock = sharedLock;
         this.sharedData = sharedData;
         instructionsForConfirmationButtons = new HashMap<>();
         List<BotCommand> botCommandsList = new ArrayList<>();
-        matchedSignals = new ArrayList<>();
         botCommandsList.add(new BotCommand("start", "get a welcome message"));
-        /*botCommandsList.add(new BotCommand("mydata", "get my stored data"));
+        botCommandsList.add(new BotCommand("mydata", "get my stored data"));
         botCommandsList.add(new BotCommand("help", HELP_INFO));
-        botCommandsList.add(new BotCommand("edit", "edit"));*/
+        botCommandsList.add(new BotCommand("edit", "edit"));
         try {
             execute(new SetMyCommands(botCommandsList, new BotCommandScopeDefault(), null));
         } catch (TelegramApiException e) {
@@ -96,60 +92,69 @@ public class TelegramBot extends TelegramLongPollingBot {
     @Override
     public void onUpdateReceived(Update update) {
         String messageText;
+        boolean isProcessed = false;
+
+
         if (update.hasMessage() && update.getMessage().hasText()) {
             messageText = update.getMessage().getText().toLowerCase();
             Long chatId = update.getMessage().getChatId();
 
-            if (messageText.equals("/start")) {
-                String name = update.getMessage().getChat().getFirstName();
-                startMessageReceived(chatId, name);
-                System.out.println("Owner " + botOwner + "bot name " + this.name);
-            } else if (messageText.equals("help")) {
-                configureAndSendMessage(chatId, HELP_BODY);
-            } else if (messageText.equals("mydata")) {
-                String answer = getUserDataString(update);
-                sendMessage(chatId, answer);
-            } else if (messageText.startsWith("sig")) {
+            if (messageText.startsWith("sig")) {
                 Signal userSignal = processTextSignal(chatId, messageText);
-                System.out.println("********************" + userSignal);
+                isProcessed = true;
                 log.info("SIGNAL CREATED DETAILS: {}", userSignal);
                 if (!userSignal.ticker().equalsIgnoreCase("error")) {
                     try {
                         sharedLock.lock();
-                        //eventListener.getUserSignals().add(userSignal);
                         sharedData.addUserSignalsWithLock(userSignal);
                     } finally {
                         sharedLock.unlock();
                     }
                 }
                 setSignalReceived(chatId, userSignal);
-            } else if (messageText.startsWith("cancel_one")) {
+            } else if (messageText.startsWith("cancel one")) {
                 signalToCancel = processTextSignal(chatId, messageText);
                 setUpConfirmationBeforeCancellation(chatId, signalToCancel, instructionsForConfirmationButtons, ONE_ORDER);
-            } else if (messageText.startsWith("cancel_pos")) {
+                isProcessed = true;
+            } else if (messageText.startsWith("cancel pos")) {
                 int index = Integer.parseInt(extractLastWord(messageText)) - 1;
                 if (index < sharedData.getUserSignalsSizeWithLock()) {
                     signalToCancel = sharedData.getUserSignalsIndexWithLock(index);
                     setUpConfirmationBeforeCancellation(chatId, signalToCancel, instructionsForConfirmationButtons, ONE_ORDER);
                 } else sendMessage(chatId, "There is no such signal");
-            } else if (messageText.equals("cancel_all")) {
-                setUpConfirmationBeforeCancellation(chatId, new Signal("s", 12.2, 0.0, "", 1, counter++), instructionsForConfirmationButtons, ALl_ORDERS);
-                System.out.println("********** cancel all **********");
+                isProcessed = true;
             } else if (messageText.startsWith("set default stable")) {
                 defaultStableCoin = extractLastWord(messageText).toUpperCase();
                 System.out.println(defaultStableCoin);
-            } else if (messageText.equals("default coin")) {
-                configureAndSendMessage(chatId, "Default stable coin is: " + defaultStableCoin);
-            } else if (messageText.equals("default fiat")) {
-                configureAndSendMessage(chatId, "Default fiat currency is: " + defaultFiat);
-            } else if (messageText.equals("edit")) {
-                String message = getListOrdersString(sharedData.getUserSignalsCopyWithLock());
-                configureAndSendMessage(chatId, message);
-            } else if (messageText.equals("test")) {
-                String message = sharedData.getUserSignalsIndexWithLock(0).toString();
-                configureAndSendMessage(chatId, message);
-            } else {
-                configureAndSendMessage(chatId, "Sorry, this command is not recognized");
+                isProcessed = true;
+            }
+            switch (messageText) {
+                case "/start" -> {
+                    String name = update.getMessage().getChat().getFirstName();
+                    startMessageReceived(chatId, name);
+                    System.out.println("Owner " + botOwner + "bot name " + this.name);
+                }
+                case "help" -> configureAndSendMessage(chatId, HELP_BODY);
+                case "mydata" -> {
+                    String answer = getUserDataString(update);
+                    sendMessage(chatId, answer);
+                }
+                case "cancel_all" -> setUpConfirmationBeforeCancellation(chatId,
+                        new Signal("s", 12.2, 0.0, "", 1, counter++),
+                        instructionsForConfirmationButtons, ALl_ORDERS);
+                case "default coin" -> configureAndSendMessage(chatId, "Default stable coin is: " + defaultStableCoin);
+                case "default fiat" -> configureAndSendMessage(chatId, "Default fiat currency is: " + defaultFiat);
+                case "edit" -> {
+                    String message = getListOrdersString(sharedData.getUserSignalsCopyWithLock());
+                    configureAndSendMessage(chatId, message);
+                }
+                case "test" -> {
+                    String message = sharedData.getUserSignalsIndexWithLock(0).toString();
+                    configureAndSendMessage(chatId, message);
+                }
+                default -> {
+                    if (!isProcessed) configureAndSendMessage(chatId, "Sorry, this command is not recognized");
+                }
             }
 
 
@@ -157,8 +162,6 @@ public class TelegramBot extends TelegramLongPollingBot {
             String data = update.getCallbackQuery().getData();
             Integer messageId = update.getCallbackQuery().getMessage().getMessageId();
             Long chatId = update.getCallbackQuery().getMessage().getChatId();
-
-
             if (data.equals("CONFIRM_BUTTON")) {
                 Long l = instructionsForConfirmationButtons.get(CONFIRMATION_INSTRUCTION);
                 String text = "";
@@ -171,11 +174,9 @@ public class TelegramBot extends TelegramLongPollingBot {
                     text = "All orders have been cancelled";
                 }
                 executeEditMessageText(chatId, text, messageId);
-
             } else if (data.equals("DENY_BUTTON")) {
                 String text = "Cancellation denied";
                 executeEditMessageText(chatId, text, messageId);
-
             }
         }
     }
@@ -233,7 +234,7 @@ public class TelegramBot extends TelegramLongPollingBot {
     }
 
     private Signal processTextSignal(Long chatId, String messageText) {
-        log.info("METHOD: processTextSignal started");
+        //  log.info("METHOD: processTextSignal started");
         boolean isValid = false;
         String[] array = messageText.split("\\s+");
         ArrayList<String> params = new ArrayList<>();
@@ -272,17 +273,16 @@ public class TelegramBot extends TelegramLongPollingBot {
             }
             message = sb.toString();
 
-            log.info("LOCK for current TAKEN in {}", Thread.currentThread().getName());
             List<JsonObject> extractedObjects = sharedData.getExtractedObjectsCopyWithLock();
-            log.info("EXTRACTED SIZE: {}", extractedObjects.size());
+            //  log.info("EXTRACTED SIZE: {}", extractedObjects.size());
             for (JsonObject o : extractedObjects
             ) {
                 Swap swap = (Swap) o;
                 if (swap.instId().contains(ticker)) {
                     current = swap.last();
-                    log.info("Current value is {}", current);
+                    //  log.info("Current value is {}", current);
                     isValid = true;
-                    log.info("SWAP last = {}, isValid = {}", current, isValid);
+                    //   log.info("SWAP last = {}, isValid = {}", current, isValid);
                 }
             }
 
@@ -453,24 +453,20 @@ public class TelegramBot extends TelegramLongPollingBot {
 
     public void monitorSignalMatchFlag() {
         while (true) {
-            if (!matchedSignals.isEmpty()) {
-                try {
-                    sharedLock.lock();
-                    Signal signal = matchedSignals.remove(0);
-                    StringBuilder sb = new StringBuilder();
-                    sb
-                            .append("SIGNAL MATCH!!!\n")
-                            .append(signal.ticker()).append("\n")
-                            .append(signal.price()).append("\n")
-                            .append(signal.message());
-                    sendMessage(signal.user(), sb.toString());
+            log.info("THREAD {}", Thread.currentThread().getName());
+            if (!sharedData.matchedSignalsIsEmpty()) {
 
-                } finally {
-                    sharedLock.unlock();
-                }
+                Signal signal = sharedData.removeFromMatchedSignals(0);
+                StringBuilder sb = new StringBuilder();
+                sb
+                        .append("SIGNAL MATCH!!!\n")
+                        .append(signal.ticker()).append("\n")
+                        .append(signal.price()).append("\n")
+                        .append(signal.message());
+                sendMessage(signal.user(), sb.toString());
             }
             try {
-                Thread.sleep(500);
+                Thread.sleep(200);
                 //log.info("While woke up matched size: {}", matchedSignals.size());
                 // log.info("monitor flag in {} is working", Thread.currentThread().getName());
             } catch (Exception e) {

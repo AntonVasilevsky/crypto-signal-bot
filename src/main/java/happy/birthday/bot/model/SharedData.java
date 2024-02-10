@@ -14,15 +14,21 @@ import java.util.concurrent.locks.Lock;
 public class SharedData {
     private final Lock userSignalsLock;
     private final Lock extractedObjectsLock;
+    private final Lock matchedSignalsLock;
 
 
     //  private List<JsonObject> extractedObjects = Collections.synchronizedList(new ArrayList<>());
-    private List<JsonObject> extractedObjects = new ArrayList<>();
-    private final List<Signal> userSignals = new ArrayList<>();
+    private List<JsonObject> extractedObjects;
+    private final List<Signal> userSignals;
+    public List<Signal> matchedSignals;
 
-    public SharedData(Lock userSignalsLock, Lock extractedObjectsLock) {
+    public SharedData(Lock userSignalsLock, Lock extractedObjectsLock, Lock matchedSignalsLock) {
         this.userSignalsLock = userSignalsLock;
         this.extractedObjectsLock = extractedObjectsLock;
+        this.matchedSignalsLock = matchedSignalsLock;
+        extractedObjects = new ArrayList<>();
+        userSignals = new ArrayList<>();
+        matchedSignals = new ArrayList<>();
     }
 
     public void addUserSignalsWithLock(Signal signal) {
@@ -104,6 +110,50 @@ public class SharedData {
             extractedObjects = jsonObjectListFromApi;
         } finally {
             userSignalsLock.unlock();
+        }
+    }
+
+    public List<Signal> getMatchedSignalsCopyWithLock() {
+        try {
+            matchedSignalsLock.lock();
+            return new ArrayList<>(matchedSignals);
+        } finally {
+            matchedSignalsLock.unlock();
+        }
+    }
+
+    public boolean matchedSignalsIsEmpty() {
+        try {
+            matchedSignalsLock.lock();
+            return matchedSignals.isEmpty();
+        } finally {
+            matchedSignalsLock.unlock();
+        }
+    }
+
+    public Signal removeFromMatchedSignals(int i) {
+        try {
+            matchedSignalsLock.lock();
+            return matchedSignals.remove(i);
+        } finally {
+            matchedSignalsLock.unlock();
+        }
+    }
+    public boolean removeFromMatchedSignals(Signal signal) {
+        try {
+            matchedSignalsLock.lock();
+            return matchedSignals.remove(signal);
+        } finally {
+            matchedSignalsLock.unlock();
+        }
+    }
+
+    public void addMatchedSignalsWithLock(Signal s) {
+        try {
+            matchedSignalsLock.lock();
+            matchedSignals.add(s);
+        } finally {
+            matchedSignalsLock.unlock();
         }
     }
 }
